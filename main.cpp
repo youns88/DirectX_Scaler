@@ -32,38 +32,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HWND gameHwnd = FindWindowW(NULL, TARGET_TITLE);
     if (!gameHwnd) return 0;
 
+    // 1. Get Game Rect and Screen Info
     RECT gr; GetClientRect(gameHwnd, &gr);
+    POINT tl = {0, 0}; ClientToScreen(gameHwnd, &tl);
     int upW = (int)((gr.right - gr.left) * SCALE);
     int upH = (int)((gr.bottom - gr.top) * SCALE);
-    int posX = (GetSystemMetrics(SM_CXSCREEN) - upW) / 2;
-    int posY = (GetSystemMetrics(SM_CYSCREEN) - upH) / 2;
+    int scrW = GetSystemMetrics(SM_CXSCREEN);
+    int scrH = GetSystemMetrics(SM_CYSCREEN);
 
-    WNDCLASSW wc = {0};
-    wc.lpfnWndProc = DefWindowProcW;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = L"SharpScaler";
+    // 2. Calculate UV coordinates for just the game area
+    float u1 = (float)tl.x / scrW;
+    float v1 = (float)tl.y / scrH;
+    float u2 = (float)(tl.x + (gr.right - gr.left)) / scrW;
+    float v2 = (float)(tl.y + (gr.bottom - gr.top)) / scrH;
+
+    WNDCLASSW wc = {0}; wc.lpfnWndProc = DefWindowProcW; wc.hInstance = hInstance; wc.lpszClassName = L"SharpScaler";
     RegisterClassW(&wc);
-
-    // Added WS_EX_TRANSPARENT back so you can click through to the game
-    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT,
-        wc.lpszClassName, L"SharpScaler", WS_POPUP | WS_VISIBLE, posX, posY, upW, upH, NULL, NULL, hInstance, NULL);
+    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT, wc.lpszClassName, L"SharpScaler", 
+        WS_POPUP | WS_VISIBLE, (scrW - upW)/2, (scrH - upH)/2, upW, upH, NULL, NULL, hInstance, NULL);
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     SetWindowDisplayAffinity(hwnd, 0x00000011);
 
     DXGI_SWAP_CHAIN_DESC scd = {0};
-    scd.BufferCount = 1;
-    scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    scd.OutputWindow = hwnd;
-    scd.SampleDesc.Count = 1;
-    scd.Windowed = TRUE;
+    scd.BufferCount = 1; scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; scd.OutputWindow = hwnd;
+    scd.SampleDesc.Count = 1; scd.Windowed = TRUE;
 
     ID3D11Device* dev; ID3D11DeviceContext* ctx; IDXGISwapChain* sc;
     D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &scd, &sc, &dev, NULL, &ctx);
-
     ID3D11Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
-    ID3D11RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv);
-    bb->Release();
+    ID3D11RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
 
     ID3DBlob *vsB, *psB;
     D3DCompile(shaderSource, strlen(shaderSource), NULL, NULL, NULL, "vs_main", "vs_4_0", 0, 0, &vsB, NULL);
@@ -72,7 +70,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     dev->CreateVertexShader(vsB->GetBufferPointer(), vsB->GetBufferSize(), NULL, &vs);
     dev->CreatePixelShader(psB->GetBufferPointer(), psB->GetBufferSize(), NULL, &ps);
 
-    Vertex v[] = { {-1,1,0,1,0,0}, {1,1,0,1,1,0}, {-1,-1,0,1,0,1}, {1,-1,0,1,1,1} };
+    // Mapped Vertices with calculated UVs
+    Vertex v[] = { 
+        {-1, 1,0,1, u1, v1}, // Top Left
+        { 1, 1,0,1, u2, v1}, // Top Right
+        {-1,-1,0,1, u1, v2}, // Bottom Left
+        { 1,-1,0,1, u2, v2}  // Bottom Right
+    };
     D3D11_BUFFER_DESC bd = { sizeof(v), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER };
     D3D11_SUBRESOURCE_DATA sd = { v };
     ID3D11Buffer* vb; dev->CreateBuffer(&bd, &sd, &vb);
@@ -80,8 +84,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     D3D11_INPUT_ELEMENT_DESC ied[] = { {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0}, {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0} };
     ID3D11InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), &il);
 
-    D3D11_SAMPLER_DESC smpD = {};
-    smpD.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    D3D11_SAMPLER_DESC smpD = {}; smpD.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
     smpD.AddressU = smpD.AddressV = smpD.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     ID3D11SamplerState* smp; dev->CreateSamplerState(&smpD, &smp);
 
@@ -94,31 +97,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     MSG msg = {0};
     while (msg.message != WM_QUIT) {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { DispatchMessage(&msg); }
-        
         IDXGIResource* res = nullptr; DXGI_OUTDUPL_FRAME_INFO fi;
         if (SUCCEEDED(dupl->AcquireNextFrame(16, &fi, &res))) {
             ID3D11Texture2D* tex; res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
             ID3D11ShaderResourceView* srv; dev->CreateShaderResourceView(tex, NULL, &srv);
-
             ctx->OMSetRenderTargets(1, &rtv, NULL);
-            float clear[] = { 1, 0, 0, 1 }; // Red fallback
-            ctx->ClearRenderTargetView(rtv, clear);
-
             D3D11_VIEWPORT vp = { 0, 0, (float)upW, (float)upH, 0, 1 };
             ctx->RSSetViewports(1, &vp);
             ctx->IASetInputLayout(il);
             UINT strd = sizeof(Vertex), offs = 0;
             ctx->IASetVertexBuffers(0, 1, &vb, &strd, &offs);
             ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            ctx->VSSetShader(vs, NULL, 0);
-            ctx->PSSetShader(ps, NULL, 0);
-            ctx->PSSetShaderResources(0, 1, &srv);
-            ctx->PSSetSamplers(0, 1, &smp);
-            ctx->Draw(4, 0);
-            sc->Present(1, 0);
-
-            srv->Release(); tex->Release(); res->Release();
-            dupl->ReleaseFrame();
+            ctx->VSSetShader(vs, NULL, 0); ctx->PSSetShader(ps, NULL, 0);
+            ctx->PSSetShaderResources(0, 1, &srv); ctx->PSSetSamplers(0, 1, &smp);
+            ctx->Draw(4, 0); sc->Present(1, 0);
+            srv->Release(); tex->Release(); res->Release(); dupl->ReleaseFrame();
         }
         if (GetAsyncKeyState(VK_ESCAPE)) break;
     }
