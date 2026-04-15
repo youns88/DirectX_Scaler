@@ -1,7 +1,6 @@
 #include <windows.h>
 #include <d3d10.h>
 #include <d3dcompiler.h>
-#include <string>
 
 #pragma comment(lib, "d3d10.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -35,7 +34,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HWND gameHwnd = FindWindowW(NULL, TARGET_TITLE);
     if (!gameHwnd) {
-        MessageBoxW(NULL, L"DOSBox-X Window not found!", L"Error", MB_ICONERROR);
+        MessageBoxW(NULL, L"Game window not found!", L"Error", MB_ICONERROR);
         return 0;
     }
 
@@ -43,23 +42,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     int gw = gr.right - gr.left, gh = gr.bottom - gr.top;
     int upW = (int)(gw * SCALE), upH = (int)(gh * SCALE);
 
-    WNDCLASSW wc = {0}; wc.lpfnWndProc = WndProc; wc.hInstance = hInstance; wc.lpszClassName = L"SharpScaler";
+    WNDCLASSW wc = { 0 }; 
+    wc.lpfnWndProc = WndProc; 
+    wc.hInstance = hInstance; 
+    wc.lpszClassName = L"SharpScaler";
     RegisterClassW(&wc);
-    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT, wc.lpszClassName, L"SharpScaler", 
-        WS_POPUP | WS_VISIBLE, (GetSystemMetrics(0)-upW)/2, (GetSystemMetrics(1)-upH)/2, upW, upH, NULL, NULL, hInstance, NULL);
-    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
-    DXGI_SWAP_CHAIN_DESC scd = {0};
-    scd.BufferCount = 1; scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; scd.OutputWindow = hwnd;
-    scd.SampleDesc.Count = 1; scd.Windowed = TRUE;
+    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT, 
+        wc.lpszClassName, L"SharpScaler", WS_POPUP | WS_VISIBLE, 
+        (GetSystemMetrics(0) - upW) / 2, (GetSystemMetrics(1) - upH) / 2, upW, upH, NULL, NULL, hInstance, NULL);
+    
+    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+    SetWindowDisplayAffinity(hwnd, 0x00000001); // Standard monitor exclusion
+
+    DXGI_SWAP_CHAIN_DESC scd = { 0 };
+    scd.BufferCount = 1; 
+    scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; 
+    scd.OutputWindow = hwnd;
+    scd.SampleDesc.Count = 1; 
+    scd.Windowed = TRUE;
 
     ID3D10Device* dev; IDXGISwapChain* sc;
-    HRESULT hr = D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev);
-    if (FAILED(hr)) {
-        MessageBoxW(NULL, L"Failed to create DX10 Device. Your GPU might be too old.", L"Error", MB_ICONERROR);
-        return 0;
-    }
+    if (FAILED(D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev))) return 0;
 
     ID3D10Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)&bb);
     ID3D10RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
@@ -81,10 +86,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     D3D10_SUBRESOURCE_DATA vsd = { vertices };
     ID3D10Buffer* vb; dev->CreateBuffer(&vbd, &vsd, &vb);
 
-    D3D10_INPUT_ELEMENT_DESC ied[] = { {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D10_INPUT_PER_VERTEX_DATA,0}, {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D10_INPUT_PER_VERTEX_DATA,0} };
-    ID3D11InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), (ID3D10InputLayout**)&il);
+    D3D10_INPUT_ELEMENT_DESC ied[] = { 
+        {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D10_INPUT_PER_VERTEX_DATA,0}, 
+        {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D10_INPUT_PER_VERTEX_DATA,0} 
+    };
+    ID3D10InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), &il);
 
-    D3D10_SAMPLER_DESC smpD = {}; smpD.Filter = D3D10_FILTER_MIN_MAG_MIP_POINT;
+    D3D10_SAMPLER_DESC smpD = {}; 
+    smpD.Filter = D3D10_FILTER_MIN_MAG_MIP_POINT;
     smpD.AddressU = smpD.AddressV = smpD.AddressW = D3D10_TEXTURE_ADDRESS_CLAMP;
     ID3D10SamplerState* smp; dev->CreateSamplerState(&smpD, &smp);
 
@@ -93,13 +102,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, gw, gh);
     SelectObject(hdcMem, hbm);
 
-    MSG msg = {0};
+    MSG msg = { 0 };
     while (msg.message != WM_QUIT) {
-        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); }
-        else {
-            if (!IsIconic(gameHwnd)) {
+        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { 
+            TranslateMessage(&msg); 
+            DispatchMessage(&msg); 
+        } else {
+            if (!IsIconic(gameHwnd) && IsWindowVisible(gameHwnd)) {
                 if (!IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_SHOW);
-                POINT pt = {0, 0}; ClientToScreen(gameHwnd, &pt);
+                
+                POINT pt = { 0, 0 }; ClientToScreen(gameHwnd, &pt);
                 BitBlt(hdcMem, 0, 0, gw, gh, hdcScreen, pt.x, pt.y, SRCCOPY);
                 
                 D3D10_MAPPED_TEXTURE2D map;
@@ -111,7 +123,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
                 dev->OMSetRenderTargets(1, &rtv, NULL);
                 D3D10_VIEWPORT vp = { 0, 0, (UINT)upW, (UINT)upH, 0, 1 };
                 dev->RSSetViewports(1, &vp);
-                dev->IASetInputLayout((ID3D10InputLayout*)il);
+                dev->IASetInputLayout(il);
                 UINT strd = sizeof(Vertex), off = 0;
                 dev->IASetVertexBuffers(0, 1, &vb, &strd, &off);
                 dev->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
@@ -124,5 +136,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
             }
         }
     }
+    
+    // Cleanup
+    if (vb) vb->Release(); if (il) il->Release(); if (vs) vs->Release(); if (ps) ps->Release();
+    if (gameTex) gameTex->Release(); if (srv) srv->Release(); if (rtv) rtv->Release();
+    if (sc) sc->Release(); if (dev) dev->Release();
+    DeleteObject(hbm); DeleteDC(hdcMem); ReleaseDC(NULL, hdcScreen);
+    
     return 0;
 }
