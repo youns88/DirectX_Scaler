@@ -1,0 +1,19 @@
+name: Build Upscaler
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Build
+      run: |
+        cl /EHsc /O2 main.cpp d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib
