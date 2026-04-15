@@ -3,6 +3,7 @@
 #include <d3dcompiler.h>
 
 #pragma comment(lib, "d3d10.lib")
+#pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -52,7 +53,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     ID3D10Device* dev; IDXGISwapChain* sc;
     D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev);
 
-    ID3D10Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    ID3D10Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)&bb);
     ID3D10RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
 
     ID3D10Texture2D* gameTex;
@@ -90,15 +91,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         else {
             if (!IsIconic(gameHwnd)) {
                 if (!IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_SHOW);
-                
                 POINT pt = {0, 0}; ClientToScreen(gameHwnd, &pt);
                 BitBlt(hdcMem, 0, 0, gw, gh, hdcScreen, pt.x, pt.y, SRCCOPY);
-                
                 D3D10_MAPPED_TEXTURE2D map;
                 gameTex->Map(0, D3D10_MAP_WRITE_DISCARD, 0, &map);
                 GetBitmapBits(hbm, gw * gh * 4, map.pData);
                 gameTex->Unmap(0);
-
                 dev->OMSetRenderTargets(1, &rtv, NULL);
                 D3D10_VIEWPORT vp = { 0, 0, (UINT)upW, (UINT)upH, 0, 1 };
                 dev->RSSetViewports(1, &vp);
