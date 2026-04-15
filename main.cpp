@@ -47,6 +47,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     RegisterClassW(&wc);
     HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT, wc.lpszClassName, L"SharpScaler", 
         WS_POPUP | WS_VISIBLE, (scrW - upW)/2, (scrH - upH)/2, upW, upH, NULL, NULL, hInstance, NULL);
+    
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     SetWindowDisplayAffinity(hwnd, 0x00000011);
 
@@ -72,7 +73,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     D3D11_SUBRESOURCE_DATA sd = { v };
     ID3D11Buffer* vb; dev->CreateBuffer(&bd, &sd, &vb);
 
-    D3D11_INPUT_ELEMENT_DESC ied[] = { {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0}, {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0} };
+    D3D11_INPUT_ELEMENT_DESC ied[] = { 
+        {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0}, 
+        {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0} 
+    };
     ID3D11InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), &il);
 
     D3D11_SAMPLER_DESC smpD = {}; smpD.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
@@ -87,14 +91,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     MSG msg = {0};
     while (msg.message != WM_QUIT) {
-        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); }
-        else {
-            // Only capture/scale if the game window is NOT minimized
-            if (!IsIconic(gameHwnd)) {
+        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { 
+            TranslateMessage(&msg); 
+            DispatchMessage(&msg); 
+        } else {
+            if (!IsIconic(gameHwnd) && IsWindowVisible(gameHwnd)) {
                 IDXGIResource* res = nullptr; DXGI_OUTDUPL_FRAME_INFO fi;
                 if (SUCCEEDED(dupl->AcquireNextFrame(1, &fi, &res))) {
                     ID3D11Texture2D* tex; res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
                     ID3D11ShaderResourceView* srv; dev->CreateShaderResourceView(tex, NULL, &srv);
+                    
                     ctx->OMSetRenderTargets(1, &rtv, NULL);
                     D3D11_VIEWPORT vp = { 0, 0, (float)upW, (float)upH, 0, 1 };
                     ctx->RSSetViewports(1, &vp);
@@ -105,17 +111,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
                     ctx->VSSetShader(vs, NULL, 0); ctx->PSSetShader(ps, NULL, 0);
                     ctx->PSSetShaderResources(0, 1, &srv); ctx->PSSetSamplers(0, 1, &smp);
                     ctx->Draw(4, 0); sc->Present(1, 0);
+                    
                     srv->Release(); tex->Release(); res->Release(); dupl->ReleaseFrame();
                 }
             } else {
-                // If minimized, clear to transparent and wait
-                float clear[4] = {0,0,0,0};
-                ctx->ClearRenderTargetView(rtv, clear);
+                float transparent[] = {0.0f, 0.0f, 0.0f, 0.0f};
+                ctx->OMSetRenderTargets(1, &rtv, NULL);
+                ctx->ClearRenderTargetView(rtv, transparent);
                 sc->Present(1, 0);
-                Sleep(100); 
+                Sleep(200);
             }
         }
     }
-    if (dupl) dupl->Release(); if (rtv) rtv->Release(); if (sc) sc->Release(); if (ctx) ctx->Release(); if (dev) dev->Release();
+
+    if (dupl) dupl->Release(); if (rtv) rtv->Release(); if (sc) sc->Release(); 
+    if (ctx) ctx->Release(); if (dev) dev->Release();
     return 0;
 }
