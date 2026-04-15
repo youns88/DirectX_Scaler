@@ -14,9 +14,7 @@ const char* shaderSource = R"(
     struct VS_IN { float4 pos : POSITION; float2 uv : TEXCOORD; };
     struct PS_IN { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };
     PS_IN vs_main(VS_IN input) {
-        PS_IN output;
-        output.pos = input.pos;
-        output.uv = input.uv;
+        PS_IN output; output.pos = input.pos; output.uv = input.uv;
         return output;
     }
     Texture2D tex : register(t0);
@@ -28,25 +26,24 @@ const char* shaderSource = R"(
 
 struct Vertex { float x, y, z, w, u, v; };
 
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HWND gameHwnd = FindWindowW(NULL, TARGET_TITLE);
     if (!gameHwnd) return 0;
 
-    // 1. Get Game Rect and Screen Info
     RECT gr; GetClientRect(gameHwnd, &gr);
     POINT tl = {0, 0}; ClientToScreen(gameHwnd, &tl);
-    int upW = (int)((gr.right - gr.left) * SCALE);
-    int upH = (int)((gr.bottom - gr.top) * SCALE);
-    int scrW = GetSystemMetrics(SM_CXSCREEN);
-    int scrH = GetSystemMetrics(SM_CYSCREEN);
+    int upW = (int)((gr.right - gr.left) * SCALE), upH = (int)((gr.bottom - gr.top) * SCALE);
+    int scrW = GetSystemMetrics(SM_CXSCREEN), scrH = GetSystemMetrics(SM_CYSCREEN);
 
-    // 2. Calculate UV coordinates for just the game area
-    float u1 = (float)tl.x / scrW;
-    float v1 = (float)tl.y / scrH;
-    float u2 = (float)(tl.x + (gr.right - gr.left)) / scrW;
-    float v2 = (float)(tl.y + (gr.bottom - gr.top)) / scrH;
+    float u1 = (float)tl.x / scrW, v1 = (float)tl.y / scrH;
+    float u2 = (float)(tl.x + (gr.right - gr.left)) / scrW, v2 = (float)(tl.y + (gr.bottom - gr.top)) / scrH;
 
-    WNDCLASSW wc = {0}; wc.lpfnWndProc = DefWindowProcW; wc.hInstance = hInstance; wc.lpszClassName = L"SharpScaler";
+    WNDCLASSW wc = {0}; wc.lpfnWndProc = WndProc; wc.hInstance = hInstance; wc.lpszClassName = L"SharpScaler";
     RegisterClassW(&wc);
     HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT, wc.lpszClassName, L"SharpScaler", 
         WS_POPUP | WS_VISIBLE, (scrW - upW)/2, (scrH - upH)/2, upW, upH, NULL, NULL, hInstance, NULL);
@@ -70,13 +67,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     dev->CreateVertexShader(vsB->GetBufferPointer(), vsB->GetBufferSize(), NULL, &vs);
     dev->CreatePixelShader(psB->GetBufferPointer(), psB->GetBufferSize(), NULL, &ps);
 
-    // Mapped Vertices with calculated UVs
-    Vertex v[] = { 
-        {-1, 1,0,1, u1, v1}, // Top Left
-        { 1, 1,0,1, u2, v1}, // Top Right
-        {-1,-1,0,1, u1, v2}, // Bottom Left
-        { 1,-1,0,1, u2, v2}  // Bottom Right
-    };
+    Vertex v[] = { {-1,1,0,1,u1,v1}, {1,1,0,1,u2,v1}, {-1,-1,0,1,u1,v2}, {1,-1,0,1,u2,v2} };
     D3D11_BUFFER_DESC bd = { sizeof(v), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER };
     D3D11_SUBRESOURCE_DATA sd = { v };
     ID3D11Buffer* vb; dev->CreateBuffer(&bd, &sd, &vb);
@@ -96,24 +87,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     MSG msg = {0};
     while (msg.message != WM_QUIT) {
-        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { DispatchMessage(&msg); }
-        IDXGIResource* res = nullptr; DXGI_OUTDUPL_FRAME_INFO fi;
-        if (SUCCEEDED(dupl->AcquireNextFrame(16, &fi, &res))) {
-            ID3D11Texture2D* tex; res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
-            ID3D11ShaderResourceView* srv; dev->CreateShaderResourceView(tex, NULL, &srv);
-            ctx->OMSetRenderTargets(1, &rtv, NULL);
-            D3D11_VIEWPORT vp = { 0, 0, (float)upW, (float)upH, 0, 1 };
-            ctx->RSSetViewports(1, &vp);
-            ctx->IASetInputLayout(il);
-            UINT strd = sizeof(Vertex), offs = 0;
-            ctx->IASetVertexBuffers(0, 1, &vb, &strd, &offs);
-            ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            ctx->VSSetShader(vs, NULL, 0); ctx->PSSetShader(ps, NULL, 0);
-            ctx->PSSetShaderResources(0, 1, &srv); ctx->PSSetSamplers(0, 1, &smp);
-            ctx->Draw(4, 0); sc->Present(1, 0);
-            srv->Release(); tex->Release(); res->Release(); dupl->ReleaseFrame();
+        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+        else {
+            // Only capture/scale if the game window is NOT minimized
+            if (!IsIconic(gameHwnd)) {
+                IDXGIResource* res = nullptr; DXGI_OUTDUPL_FRAME_INFO fi;
+                if (SUCCEEDED(dupl->AcquireNextFrame(1, &fi, &res))) {
+                    ID3D11Texture2D* tex; res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
+                    ID3D11ShaderResourceView* srv; dev->CreateShaderResourceView(tex, NULL, &srv);
+                    ctx->OMSetRenderTargets(1, &rtv, NULL);
+                    D3D11_VIEWPORT vp = { 0, 0, (float)upW, (float)upH, 0, 1 };
+                    ctx->RSSetViewports(1, &vp);
+                    ctx->IASetInputLayout(il);
+                    UINT strd = sizeof(Vertex), offs = 0;
+                    ctx->IASetVertexBuffers(0, 1, &vb, &strd, &offs);
+                    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+                    ctx->VSSetShader(vs, NULL, 0); ctx->PSSetShader(ps, NULL, 0);
+                    ctx->PSSetShaderResources(0, 1, &srv); ctx->PSSetSamplers(0, 1, &smp);
+                    ctx->Draw(4, 0); sc->Present(1, 0);
+                    srv->Release(); tex->Release(); res->Release(); dupl->ReleaseFrame();
+                }
+            } else {
+                // If minimized, clear to transparent and wait
+                float clear[4] = {0,0,0,0};
+                ctx->ClearRenderTargetView(rtv, clear);
+                sc->Present(1, 0);
+                Sleep(100); 
+            }
         }
-        if (GetAsyncKeyState(VK_ESCAPE)) break;
     }
+    if (dupl) dupl->Release(); if (rtv) rtv->Release(); if (sc) sc->Release(); if (ctx) ctx->Release(); if (dev) dev->Release();
     return 0;
 }
