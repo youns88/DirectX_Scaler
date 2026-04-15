@@ -1,11 +1,11 @@
 #include <windows.h>
-#include <d3d11.h>
-#include <dxgi1_2.h>
+#include <d3d10.h>
 #include <d3dcompiler.h>
 
-#pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "d3d10.lib")
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
 
 const wchar_t* TARGET_TITLE = L"DOSBox-X 2025.12.01: DYNA - 3000 cycles/ms";
 const float SCALE = 1.6f;
@@ -17,8 +17,7 @@ const char* shaderSource = R"(
         PS_IN output; output.pos = input.pos; output.uv = input.uv;
         return output;
     }
-    Texture2D tex : register(t0);
-    SamplerState samp : register(s0);
+    Texture2D tex; SamplerState samp;
     float4 ps_main(PS_IN input) : SV_Target {
         return tex.Sample(samp, input.uv);
     }
@@ -36,82 +35,81 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     if (!gameHwnd) return 0;
 
     RECT gr; GetClientRect(gameHwnd, &gr);
-    POINT tl = {0, 0}; ClientToScreen(gameHwnd, &tl);
-    int upW = (int)((gr.right - gr.left) * SCALE), upH = (int)((gr.bottom - gr.top) * SCALE);
-    int scrW = GetSystemMetrics(SM_CXSCREEN), scrH = GetSystemMetrics(SM_CYSCREEN);
-
-    float u1 = (float)tl.x / scrW, v1 = (float)tl.y / scrH;
-    float u2 = (float)(tl.x + (gr.right - gr.left)) / scrW, v2 = (float)(tl.y + (gr.bottom - gr.top)) / scrH;
+    int gw = gr.right - gr.left, gh = gr.bottom - gr.top;
+    int upW = (int)(gw * SCALE), upH = (int)(gh * SCALE);
 
     WNDCLASSW wc = {0}; wc.lpfnWndProc = WndProc; wc.hInstance = hInstance; wc.lpszClassName = L"SharpScaler";
     RegisterClassW(&wc);
     HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT, wc.lpszClassName, L"SharpScaler", 
-        WS_POPUP | WS_VISIBLE, (scrW - upW)/2, (scrH - upH)/2, upW, upH, NULL, NULL, hInstance, NULL);
-    
+        WS_POPUP | WS_VISIBLE, (GetSystemMetrics(0)-upW)/2, (GetSystemMetrics(1)-upH)/2, upW, upH, NULL, NULL, hInstance, NULL);
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-    SetWindowDisplayAffinity(hwnd, 0x00000011);
 
     DXGI_SWAP_CHAIN_DESC scd = {0};
     scd.BufferCount = 1; scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; scd.OutputWindow = hwnd;
     scd.SampleDesc.Count = 1; scd.Windowed = TRUE;
 
-    ID3D11Device* dev; ID3D11DeviceContext* ctx; IDXGISwapChain* sc;
-    D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &scd, &sc, &dev, NULL, &ctx);
-    ID3D11Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
-    ID3D11RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
+    ID3D10Device* dev; IDXGISwapChain* sc;
+    D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev);
+
+    ID3D10Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    ID3D10RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
+
+    ID3D10Texture2D* gameTex;
+    D3D10_TEXTURE2D_DESC td = { (UINT)gw, (UINT)gh, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, {1,0}, D3D10_USAGE_DYNAMIC, D3D10_BIND_SHADER_RESOURCE, D3D10_CPU_ACCESS_WRITE, 0 };
+    dev->CreateTexture2D(&td, NULL, &gameTex);
+    ID3D10ShaderResourceView* srv; dev->CreateShaderResourceView(gameTex, NULL, &srv);
 
     ID3DBlob *vsB, *psB;
     D3DCompile(shaderSource, strlen(shaderSource), NULL, NULL, NULL, "vs_main", "vs_4_0", 0, 0, &vsB, NULL);
     D3DCompile(shaderSource, strlen(shaderSource), NULL, NULL, NULL, "ps_main", "ps_4_0", 0, 0, &psB, NULL);
-    ID3D11VertexShader* vs; ID3D11PixelShader* ps;
-    dev->CreateVertexShader(vsB->GetBufferPointer(), vsB->GetBufferSize(), NULL, &vs);
-    dev->CreatePixelShader(psB->GetBufferPointer(), psB->GetBufferSize(), NULL, &ps);
+    ID3D10VertexShader* vs; ID3D10PixelShader* ps;
+    dev->CreateVertexShader(vsB->GetBufferPointer(), vsB->GetBufferSize(), &vs);
+    dev->CreatePixelShader(psB->GetBufferPointer(), psB->GetBufferSize(), &ps);
 
-    Vertex vertices[] = { {-1,1,0,1,u1,v1}, {1,1,0,1,u2,v1}, {-1,-1,0,1,u1,v2}, {1,-1,0,1,u2,v2} };
-    D3D11_BUFFER_DESC bd = { sizeof(vertices), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER };
-    D3D11_SUBRESOURCE_DATA sd = { vertices };
-    ID3D11Buffer* vb; dev->CreateBuffer(&bd, &sd, &vb);
+    Vertex vertices[] = { {-1,1,0,1,0,0}, {1,1,0,1,1,0}, {-1,-1,0,1,0,1}, {1,-1,0,1,1,1} };
+    D3D10_BUFFER_DESC vbd = { sizeof(vertices), D3D10_USAGE_DEFAULT, D3D10_BIND_VERTEX_BUFFER, 0, 0 };
+    D3D10_SUBRESOURCE_DATA vsd = { vertices };
+    ID3D10Buffer* vb; dev->CreateBuffer(&vbd, &vsd, &vb);
 
-    D3D11_INPUT_ELEMENT_DESC ied[] = { {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0}, {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0} };
-    ID3D11InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), &il);
+    D3D10_INPUT_ELEMENT_DESC ied[] = { {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D10_INPUT_PER_VERTEX_DATA,0}, {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D10_INPUT_PER_VERTEX_DATA,0} };
+    ID3D10InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), &il);
 
-    D3D11_SAMPLER_DESC smpD = {}; smpD.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-    smpD.AddressU = smpD.AddressV = smpD.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-    ID3D11SamplerState* smp; dev->CreateSamplerState(&smpD, &smp);
+    D3D10_SAMPLER_DESC smpD = {}; smpD.Filter = D3D10_FILTER_MIN_MAG_MIP_POINT;
+    smpD.AddressU = smpD.AddressV = smpD.AddressW = D3D10_TEXTURE_ADDRESS_CLAMP;
+    ID3D10SamplerState* smp; dev->CreateSamplerState(&smpD, &smp);
 
-    IDXGIDevice* dxDev; dev->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxDev);
-    IDXGIAdapter* adp; dxDev->GetParent(__uuidof(IDXGIAdapter), (void**)&adp);
-    IDXGIOutput* out; adp->EnumOutputs(0, &out);
-    IDXGIOutput1* out1; out->QueryInterface(__uuidof(IDXGIOutput1), (void**)&out1);
-    IDXGIOutputDuplication* dupl; out1->DuplicateOutput(dev, &dupl);
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, gw, gh);
+    SelectObject(hdcMem, hbm);
 
     MSG msg = {0};
     while (msg.message != WM_QUIT) {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); }
         else {
             if (!IsIconic(gameHwnd)) {
-                // Game is back! Show our window
                 if (!IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_SHOW);
+                
+                POINT pt = {0, 0}; ClientToScreen(gameHwnd, &pt);
+                BitBlt(hdcMem, 0, 0, gw, gh, hdcScreen, pt.x, pt.y, SRCCOPY);
+                
+                D3D10_MAPPED_TEXTURE2D map;
+                gameTex->Map(0, D3D10_MAP_WRITE_DISCARD, 0, &map);
+                GetBitmapBits(hbm, gw * gh * 4, map.pData);
+                gameTex->Unmap(0);
 
-                IDXGIResource* res = nullptr; DXGI_OUTDUPL_FRAME_INFO fi;
-                if (SUCCEEDED(dupl->AcquireNextFrame(1, &fi, &res))) {
-                    ID3D11Texture2D* tex; res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
-                    ID3D11ShaderResourceView* srv; dev->CreateShaderResourceView(tex, NULL, &srv);
-                    ctx->OMSetRenderTargets(1, &rtv, NULL);
-                    D3D11_VIEWPORT vp = { 0, 0, (float)upW, (float)upH, 0, 1 };
-                    ctx->RSSetViewports(1, &vp);
-                    ctx->IASetInputLayout(il);
-                    UINT strd = sizeof(Vertex), offs = 0;
-                    ctx->IASetVertexBuffers(0, 1, &vb, &strd, &offs);
-                    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-                    ctx->VSSetShader(vs, NULL, 0); ctx->PSSetShader(ps, NULL, 0);
-                    ctx->PSSetShaderResources(0, 1, &srv); ctx->PSSetSamplers(0, 1, &smp);
-                    ctx->Draw(4, 0); sc->Present(1, 0);
-                    srv->Release(); tex->Release(); res->Release(); dupl->ReleaseFrame();
-                }
+                dev->OMSetRenderTargets(1, &rtv, NULL);
+                D3D10_VIEWPORT vp = { 0, 0, (UINT)upW, (UINT)upH, 0, 1 };
+                dev->RSSetViewports(1, &vp);
+                dev->IASetInputLayout(il);
+                UINT strd = sizeof(Vertex), off = 0;
+                dev->IASetVertexBuffers(0, 1, &vb, &strd, &off);
+                dev->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+                dev->VSSetShader(vs); dev->PSSetShader(ps);
+                dev->PSSetShaderResources(0, 1, &srv); dev->PSSetSamplers(0, 1, &smp);
+                dev->Draw(4, 0); sc->Present(1, 0);
             } else {
-                // Game is minimized! Hide our window immediately
                 if (IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_HIDE);
                 Sleep(200);
             }
