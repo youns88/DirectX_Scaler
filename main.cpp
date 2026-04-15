@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <d3d10.h>
 #include <d3dcompiler.h>
+#include <string>
 
 #pragma comment(lib, "d3d10.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -33,7 +34,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HWND gameHwnd = FindWindowW(NULL, TARGET_TITLE);
-    if (!gameHwnd) return 0;
+    if (!gameHwnd) {
+        MessageBoxW(NULL, L"DOSBox-X Window not found!", L"Error", MB_ICONERROR);
+        return 0;
+    }
 
     RECT gr; GetClientRect(gameHwnd, &gr);
     int gw = gr.right - gr.left, gh = gr.bottom - gr.top;
@@ -46,12 +50,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
     DXGI_SWAP_CHAIN_DESC scd = {0};
-    scd.BufferCount = 1; scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    scd.BufferCount = 1; scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; scd.OutputWindow = hwnd;
     scd.SampleDesc.Count = 1; scd.Windowed = TRUE;
 
     ID3D10Device* dev; IDXGISwapChain* sc;
-    D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev);
+    HRESULT hr = D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev);
+    if (FAILED(hr)) {
+        MessageBoxW(NULL, L"Failed to create DX10 Device. Your GPU might be too old.", L"Error", MB_ICONERROR);
+        return 0;
+    }
 
     ID3D10Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)&bb);
     ID3D10RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
@@ -74,7 +82,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     ID3D10Buffer* vb; dev->CreateBuffer(&vbd, &vsd, &vb);
 
     D3D10_INPUT_ELEMENT_DESC ied[] = { {"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D10_INPUT_PER_VERTEX_DATA,0}, {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D10_INPUT_PER_VERTEX_DATA,0} };
-    ID3D10InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), &il);
+    ID3D11InputLayout* il; dev->CreateInputLayout(ied, 2, vsB->GetBufferPointer(), vsB->GetBufferSize(), (ID3D10InputLayout**)&il);
 
     D3D10_SAMPLER_DESC smpD = {}; smpD.Filter = D3D10_FILTER_MIN_MAG_MIP_POINT;
     smpD.AddressU = smpD.AddressV = smpD.AddressW = D3D10_TEXTURE_ADDRESS_CLAMP;
@@ -93,14 +101,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
                 if (!IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_SHOW);
                 POINT pt = {0, 0}; ClientToScreen(gameHwnd, &pt);
                 BitBlt(hdcMem, 0, 0, gw, gh, hdcScreen, pt.x, pt.y, SRCCOPY);
+                
                 D3D10_MAPPED_TEXTURE2D map;
-                gameTex->Map(0, D3D10_MAP_WRITE_DISCARD, 0, &map);
-                GetBitmapBits(hbm, gw * gh * 4, map.pData);
-                gameTex->Unmap(0);
+                if (SUCCEEDED(gameTex->Map(0, D3D10_MAP_WRITE_DISCARD, 0, &map))) {
+                    GetBitmapBits(hbm, gw * gh * 4, map.pData);
+                    gameTex->Unmap(0);
+                }
+
                 dev->OMSetRenderTargets(1, &rtv, NULL);
                 D3D10_VIEWPORT vp = { 0, 0, (UINT)upW, (UINT)upH, 0, 1 };
                 dev->RSSetViewports(1, &vp);
-                dev->IASetInputLayout(il);
+                dev->IASetInputLayout((ID3D10InputLayout*)il);
                 UINT strd = sizeof(Vertex), off = 0;
                 dev->IASetVertexBuffers(0, 1, &vb, &strd, &off);
                 dev->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
