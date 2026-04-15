@@ -3,12 +3,11 @@
 #include <d3dcompiler.h>
 
 #pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 
-const wchar_t* TARGET_TITLE = L"Peggle Deluxe 1.01";
+const wchar_t* TARGET_TITLE = L"DOSBox-X 2025.12.01: DYNA - 3000 cycles/ms";
 const float SCALE = 1.6f;
 
 const char* shaderSource = R"(
@@ -34,23 +33,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HWND gameHwnd = FindWindowW(NULL, TARGET_TITLE);
-    if (!gameHwnd) {
-        MessageBoxW(NULL, L"Error: Game window not found! Ensure the title matches exactly.", L"Debug", MB_ICONERROR);
-        return 0;
-    }
+    if (!gameHwnd) return 0;
 
     RECT gr; GetClientRect(gameHwnd, &gr);
     int gw = gr.right - gr.left, gh = gr.bottom - gr.top;
     int upW = (int)(gw * SCALE), upH = (int)(gh * SCALE);
 
     WNDCLASSW wc = {0}; wc.lpfnWndProc = WndProc; wc.hInstance = hInstance; wc.lpszClassName = L"SharpScaler";
-    if (!RegisterClassW(&wc)) { MessageBoxW(NULL, L"Error: Window Class Registration Failed", L"Debug", MB_OK); return 0; }
+    RegisterClassW(&wc);
 
+    // STYLE FIX: Standard Topmost Layered window without Affinity
     HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW, 
         wc.lpszClassName, L"SharpScaler", WS_POPUP | WS_VISIBLE, 
         (GetSystemMetrics(0)-upW)/2, (GetSystemMetrics(1)-upH)/2, upW, upH, NULL, NULL, hInstance, NULL);
-    
-    if (!hwnd) { MessageBoxW(NULL, L"Error: Overlay Window Creation Failed", L"Debug", MB_OK); return 0; }
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
     DXGI_SWAP_CHAIN_DESC scd = {0};
@@ -58,24 +53,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; scd.OutputWindow = hwnd;
     scd.SampleDesc.Count = 1; scd.Windowed = TRUE;
 
-    D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0 };
     ID3D11Device* dev; ID3D11DeviceContext* ctx; IDXGISwapChain* sc;
-    if (FAILED(D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, levels, 3, D3D11_SDK_VERSION, &scd, &sc, &dev, NULL, &ctx))) {
-        MessageBoxW(NULL, L"Error: DX11 Device/SwapChain Failed", L"Debug", MB_OK); return 0;
-    }
-
+    D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &scd, &sc, &dev, NULL, &ctx);
+    
     ID3D11Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
     ID3D11RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
 
+    // Texture for GDI Capture
     ID3D11Texture2D* gameTex;
     D3D11_TEXTURE2D_DESC td = { (UINT)gw, (UINT)gh, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, {1,0}, D3D11_USAGE_DYNAMIC, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE, 0 };
-    if (FAILED(dev->CreateTexture2D(&td, NULL, &gameTex))) { MessageBoxW(NULL, L"Error: Game Texture Creation Failed", L"Debug", MB_OK); return 0; }
+    dev->CreateTexture2D(&td, NULL, &gameTex);
     ID3D11ShaderResourceView* srv; dev->CreateShaderResourceView(gameTex, NULL, &srv);
 
     ID3DBlob *vsB, *psB;
-    if (FAILED(D3DCompile(shaderSource, strlen(shaderSource), NULL, NULL, NULL, "vs_main", "vs_4_0", 0, 0, &vsB, NULL))) { MessageBoxW(NULL, L"Error: Vertex Shader Compilation Failed", L"Debug", MB_OK); return 0; }
-    if (FAILED(D3DCompile(shaderSource, strlen(shaderSource), NULL, NULL, NULL, "ps_main", "ps_4_0", 0, 0, &psB, NULL))) { MessageBoxW(NULL, L"Error: Pixel Shader Compilation Failed", L"Debug", MB_OK); return 0; }
-    
+    D3DCompile(shaderSource, strlen(shaderSource), NULL, NULL, NULL, "vs_main", "vs_4_0", 0, 0, &vsB, NULL);
+    D3DCompile(shaderSource, strlen(shaderSource), NULL, NULL, NULL, "ps_main", "ps_4_0", 0, 0, &psB, NULL);
     ID3D11VertexShader* vs; ID3D11PixelShader* ps;
     dev->CreateVertexShader(vsB->GetBufferPointer(), vsB->GetBufferSize(), NULL, &vs);
     dev->CreatePixelShader(psB->GetBufferPointer(), psB->GetBufferSize(), NULL, &ps);
@@ -92,8 +84,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     smpD.AddressU = smpD.AddressV = smpD.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     ID3D11SamplerState* smp; dev->CreateSamplerState(&smpD, &smp);
 
-    HDC hdcScreen = GetDC(NULL); HDC hdcMem = CreateCompatibleDC(hdcScreen);
-    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, gw, gh); SelectObject(hdcMem, hbm);
+    // GDI Capture Setup
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, gw, gh);
+    SelectObject(hdcMem, hbm);
 
     MSG msg = {0};
     while (msg.message != WM_QUIT) {
@@ -101,13 +96,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         else {
             if (!IsIconic(gameHwnd) && IsWindowVisible(gameHwnd)) {
                 if (!IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_SHOW);
+                
+                // 1607 FIX: Capture window directly via GDI to ignore the overlay
                 POINT pt = {0, 0}; ClientToScreen(gameHwnd, &pt);
                 BitBlt(hdcMem, 0, 0, gw, gh, hdcScreen, pt.x, pt.y, SRCCOPY);
+                
                 D3D11_MAPPED_SUBRESOURCE map;
                 if (SUCCEEDED(ctx->Map(gameTex, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
                     GetBitmapBits(hbm, gw * gh * 4, map.pData);
                     ctx->Unmap(gameTex, 0);
                 }
+
                 ctx->OMSetRenderTargets(1, &rtv, NULL);
                 D3D11_VIEWPORT vp = { 0, 0, (float)upW, (float)upH, 0, 1 };
                 ctx->RSSetViewports(1, &vp);
