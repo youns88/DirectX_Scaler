@@ -20,7 +20,8 @@ const char* shaderSource = R"(
     }
     Texture2D tex; SamplerState samp;
     float4 ps_main(PS_IN input) : SV_Target {
-        return tex.Sample(samp, input.uv);
+        // Sample BGRA texture
+        return tex.Sample(samp, input.uv).bgra;
     }
 )";
 
@@ -48,30 +49,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     wc.lpszClassName = L"SharpScaler";
     RegisterClassW(&wc);
 
-    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT, 
+    // Initial creation without TRANSPARENT to ensure it appears
+    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED, 
         wc.lpszClassName, L"SharpScaler", WS_POPUP | WS_VISIBLE, 
         (GetSystemMetrics(0) - upW) / 2, (GetSystemMetrics(1) - upH) / 2, upW, upH, NULL, NULL, hInstance, NULL);
     
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-    SetWindowDisplayAffinity(hwnd, 0x00000001); // Standard monitor exclusion
 
     DXGI_SWAP_CHAIN_DESC scd = { 0 };
     scd.BufferCount = 1; 
-    scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // Force BGRA for compatibility
     scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; 
     scd.OutputWindow = hwnd;
     scd.SampleDesc.Count = 1; 
     scd.Windowed = TRUE;
 
     ID3D10Device* dev; IDXGISwapChain* sc;
-    if (FAILED(D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev))) return 0;
+    if (FAILED(D3D10CreateDeviceAndSwapChain(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &scd, &sc, &dev))) {
+        MessageBoxW(NULL, L"D3D10 Initialization Failed", L"Error", MB_OK);
+        return 0;
+    }
 
     ID3D10Texture2D* bb; sc->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)&bb);
     ID3D10RenderTargetView* rtv; dev->CreateRenderTargetView(bb, NULL, &rtv); bb->Release();
 
     ID3D10Texture2D* gameTex;
     D3D10_TEXTURE2D_DESC td = { (UINT)gw, (UINT)gh, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, {1,0}, D3D10_USAGE_DYNAMIC, D3D10_BIND_SHADER_RESOURCE, D3D10_CPU_ACCESS_WRITE, 0 };
-    dev->CreateTexture2D(&td, NULL, &gameTex);
+    if (FAILED(dev->CreateTexture2D(&td, NULL, &gameTex))) return 0;
     ID3D10ShaderResourceView* srv; dev->CreateShaderResourceView(gameTex, NULL, &srv);
 
     ID3DBlob *vsB, *psB;
@@ -136,12 +140,5 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
             }
         }
     }
-    
-    // Cleanup
-    if (vb) vb->Release(); if (il) il->Release(); if (vs) vs->Release(); if (ps) ps->Release();
-    if (gameTex) gameTex->Release(); if (srv) srv->Release(); if (rtv) rtv->Release();
-    if (sc) sc->Release(); if (dev) dev->Release();
-    DeleteObject(hbm); DeleteDC(hdcMem); ReleaseDC(NULL, hdcScreen);
-    
     return 0;
 }
