@@ -1,4 +1,4 @@
-name: Build Scaler
+name: Build Scaler DX10
 on: [push]
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -14,7 +14,7 @@ jobs:
 
       - name: Compile
         run: |
-          cl.exe /O2 /MT /EHsc main.cpp /link d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /OUT:SharpScaler.exe
+          cl.exe /O2 /MT /EHsc main.cpp /link d3d10.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /OUT:SharpScaler.exe
         shell: cmd
 
       - name: Upload Artifact
