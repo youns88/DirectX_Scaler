@@ -3,303 +3,251 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <d3dcompiler.h>
-#include <chrono>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 
-IDXGIOutputDuplication* duplication = nullptr;
-ID3D11Device* device = nullptr;
-ID3D11DeviceContext* context = nullptr;
-IDXGISwapChain* swapChain = nullptr;
+IDXGIOutputDuplication* dup = nullptr;
+ID3D11Device* dev = nullptr;
+ID3D11DeviceContext* ctx = nullptr;
+IDXGISwapChain* sc = nullptr;
 ID3D11RenderTargetView* rtv = nullptr;
-ID3D11SamplerState* sampler = nullptr;
+ID3D11SamplerState* samp = nullptr;
 ID3D11ShaderResourceView* srv = nullptr;
+ID3D11Texture2D* cropTex = nullptr;
 ID3D11VertexShader* vs = nullptr;
 ID3D11PixelShader* ps = nullptr;
 ID3D11InputLayout* layout = nullptr;
 ID3D11Buffer* vb = nullptr;
 
-ID3D11Texture2D* croppedTex = nullptr;
-
-HWND overlay;
-bool running = true;
+HWND wnd;
+bool run = true;
 
 const char* TARGET = "DOSBox-X 2025.12.01: DYNA - 3000 cycles/ms";
 
-struct VERTEX {
-    float x, y;
-    float u, v;
-};
+struct V { float x,y,u,v; };
 
-RECT GetGameRect() {
-    HWND hwnd = FindWindowA(nullptr, TARGET);
-    RECT r = {0};
-    if (hwnd) GetWindowRect(hwnd, &r);
+RECT GetRect(HWND w) {
+    RECT r={0};
+    GetWindowRect(w,&r);
     return r;
 }
 
-void InitD3D(HWND hwnd, int width, int height) {
-    DXGI_SWAP_CHAIN_DESC sd = {};
-    sd.BufferCount = 2;
-    sd.BufferDesc.Width = width;
-    sd.BufferDesc.Height = height;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = hwnd;
-    sd.SampleDesc.Count = 1;
-    sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-
-    D3D11CreateDeviceAndSwapChain(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        0,
-        nullptr, 0,
-        D3D11_SDK_VERSION,
-        &sd,
-        &swapChain,
-        &device,
-        nullptr,
-        &context
-    );
-
-    ID3D11Texture2D* backBuffer;
-    swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
-    device->CreateRenderTargetView(backBuffer, nullptr, &rtv);
-    backBuffer->Release();
-
-    IDXGIDevice* dxgiDevice;
-    device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgiDevice);
-
-    IDXGIAdapter* adapter;
-    dxgiDevice->GetAdapter(&adapter);
-
-    IDXGIOutput* output;
-    adapter->EnumOutputs(0, &output);
-
-    IDXGIOutput1* output1;
-    output->QueryInterface(__uuidof(IDXGIOutput1), (void**)&output1);
-
-    output1->DuplicateOutput(device, &duplication);
-
-    dxgiDevice->Release();
-    adapter->Release();
-    output->Release();
-    output1->Release();
+HWND GetTarget() {
+    return FindWindowA(0, TARGET);
 }
 
-void CreateShaders() {
-    const char* vsCode =
-        "struct VS_IN { float2 pos : POSITION; float2 uv : TEXCOORD; };"
-        "struct PS_IN { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };"
-        "PS_IN main(VS_IN i){ PS_IN o; o.pos=float4(i.pos,0,1); o.uv=i.uv; return o;}";
+void InitD3D(HWND h,int W,int H){
+    DXGI_SWAP_CHAIN_DESC sd={};
+    sd.BufferCount=2;
+    sd.BufferDesc.Width=W;
+    sd.BufferDesc.Height=H;
+    sd.BufferDesc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    sd.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow=h;
+    sd.SampleDesc.Count=1;
+    sd.Windowed=1;
+    sd.SwapEffect=DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 
-    const char* psCode =
-        "Texture2D tex : register(t0);"
-        "SamplerState samp : register(s0);"
-        "float4 main(float4 p:SV_POSITION,float2 uv:TEXCOORD):SV_Target{ return tex.Sample(samp,uv);}";
+    D3D11CreateDeviceAndSwapChain(0,D3D_DRIVER_TYPE_HARDWARE,0,0,0,0,
+        D3D11_SDK_VERSION,&sd,&sc,&dev,0,&ctx);
 
-    ID3DBlob* vsBlob;
-    ID3DBlob* psBlob;
+    ID3D11Texture2D* bb;
+    sc->GetBuffer(0,__uuidof(ID3D11Texture2D),(void**)&bb);
+    dev->CreateRenderTargetView(bb,0,&rtv);
+    bb->Release();
 
-    D3DCompile(vsCode, strlen(vsCode), 0, 0, 0, "main", "vs_4_0", 0, 0, &vsBlob, 0);
-    D3DCompile(psCode, strlen(psCode), 0, 0, 0, "main", "ps_4_0", 0, 0, &psBlob, 0);
+    IDXGIDevice* dx;
+    dev->QueryInterface(__uuidof(IDXGIDevice),(void**)&dx);
+    IDXGIAdapter* ad;
+    dx->GetAdapter(&ad);
+    IDXGIOutput* out;
+    ad->EnumOutputs(0,&out);
+    IDXGIOutput1* out1;
+    out->QueryInterface(__uuidof(IDXGIOutput1),(void**)&out1);
+    out1->DuplicateOutput(dev,&dup);
 
-    device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vs);
-    device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &ps);
+    dx->Release(); ad->Release(); out->Release(); out1->Release();
+}
 
-    D3D11_INPUT_ELEMENT_DESC layoutDesc[] = {
+void Shaders(){
+    const char* v=
+    "struct V{float2 p:POSITION;float2 t:TEXCOORD;};"
+    "struct O{float4 p:SV_POSITION;float2 t:TEXCOORD;};"
+    "O main(V i){O o;o.p=float4(i.p,0,1);o.t=i.t;return o;}";
+
+    const char* p=
+    "Texture2D tx:register(t0);SamplerState s:register(s0);"
+    "float4 main(float4 p:SV_POSITION,float2 t:TEXCOORD):SV_Target{return tx.Sample(s,t);}";
+
+    ID3DBlob *vb1,*pb1;
+    D3DCompile(v,strlen(v),0,0,0,"main","vs_4_0",0,0,&vb1,0);
+    D3DCompile(p,strlen(p),0,0,0,"main","ps_4_0",0,0,&pb1,0);
+
+    dev->CreateVertexShader(vb1->GetBufferPointer(),vb1->GetBufferSize(),0,&vs);
+    dev->CreatePixelShader(pb1->GetBufferPointer(),pb1->GetBufferSize(),0,&ps);
+
+    D3D11_INPUT_ELEMENT_DESC ld[]={
         {"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
         {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,8,D3D11_INPUT_PER_VERTEX_DATA,0}
     };
 
-    device->CreateInputLayout(layoutDesc, 2, vsBlob->GetBufferPointer(),
-        vsBlob->GetBufferSize(), &layout);
+    dev->CreateInputLayout(ld,2,vb1->GetBufferPointer(),vb1->GetBufferSize(),&layout);
 
-    vsBlob->Release();
-    psBlob->Release();
+    vb1->Release(); pb1->Release();
 
-    D3D11_SAMPLER_DESC s = {};
-    s.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-    s.AddressU = s.AddressV = s.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-
-    device->CreateSamplerState(&s, &sampler);
+    D3D11_SAMPLER_DESC s={};
+    s.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT;
+    s.AddressU=s.AddressV=s.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;
+    dev->CreateSamplerState(&s,&samp);
 }
 
-ID3D11Texture2D* Capture() {
-    IDXGIResource* res;
-    DXGI_OUTDUPL_FRAME_INFO info;
+ID3D11Texture2D* Capture(){
+    IDXGIResource* r;
+    DXGI_OUTDUPL_FRAME_INFO i;
 
-    if (duplication->AcquireNextFrame(0, &info, &res) != S_OK)
-        return nullptr;
+    if(dup->AcquireNextFrame(16,&i,&r)!=S_OK) return 0;
 
-    ID3D11Texture2D* tex;
-    res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
+    ID3D11Texture2D* t;
+    r->QueryInterface(__uuidof(ID3D11Texture2D),(void**)&t);
 
-    duplication->ReleaseFrame();
-    res->Release();
-
-    return tex;
+    dup->ReleaseFrame();
+    r->Release();
+    return t;
 }
 
-// ZERO-COPY GPU CROP
-void CropTexture(ID3D11Texture2D* src, RECT r) {
-    if (croppedTex) { croppedTex->Release(); croppedTex = nullptr; }
+void Crop(ID3D11Texture2D* src, RECT wr, HWND target){
+    POINT p={wr.left,wr.top};
+    MapWindowPoints(HWND_DESKTOP,0,&p,1);
 
-    int w = r.right - r.left;
-    int h = r.bottom - r.top;
+    int w=wr.right-wr.left;
+    int h=wr.bottom-wr.top;
 
-    D3D11_TEXTURE2D_DESC desc = {};
-    desc.Width = w;
-    desc.Height = h;
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    if(!cropTex){
+        D3D11_TEXTURE2D_DESC d;
+        src->GetDesc(&d);
+        d.Width=w; d.Height=h;
+        d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        dev->CreateTexture2D(&d,0,&cropTex);
+    }
 
-    device->CreateTexture2D(&desc, nullptr, &croppedTex);
+    D3D11_BOX b={};
+    b.left=p.x; b.top=p.y;
+    b.right=p.x+w; b.bottom=p.y+h;
+    b.front=0; b.back=1;
 
-    D3D11_BOX box = {};
-    box.left = r.left;
-    box.top = r.top;
-    box.right = r.right;
-    box.bottom = r.bottom;
-    box.front = 0;
-    box.back = 1;
-
-    context->CopySubresourceRegion(croppedTex, 0, 0, 0, 0, src, 0, &box);
+    ctx->CopySubresourceRegion(cropTex,0,0,0,0,src,0,&b);
 }
 
-void Render(ID3D11Texture2D* frame) {
-    RECT r = GetGameRect();
-    if (r.right == 0) return;
-
-    CropTexture(frame, r);
-
-    if (srv) srv->Release();
-    device->CreateShaderResourceView(croppedTex, nullptr, &srv);
-
-    VERTEX verts[6] = {
-        {-1,1, 0,0},
-        {1,1, 1,0},
-        {1,-1,1,1},
-        {-1,1,0,0},
-        {1,-1,1,1},
-        {-1,-1,0,1}
+void Draw(){
+    V vtx[6]={
+        {-1,1,0,0},{1,1,1,0},{1,-1,1,1},
+        {-1,1,0,0},{1,-1,1,1},{-1,-1,0,1}
     };
 
-    if (vb) vb->Release();
+    if(vb) vb->Release();
 
-    D3D11_BUFFER_DESC bd = {};
-    bd.Usage = D3D11_USAGE_DYNAMIC;
-    bd.ByteWidth = sizeof(verts);
-    bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    D3D11_BUFFER_DESC bd={};
+    bd.Usage=D3D11_USAGE_DYNAMIC;
+    bd.ByteWidth=sizeof(vtx);
+    bd.BindFlags=D3D11_BIND_VERTEX_BUFFER;
+    bd.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
 
-    device->CreateBuffer(&bd, nullptr, &vb);
+    dev->CreateBuffer(&bd,0,&vb);
 
-    D3D11_MAPPED_SUBRESOURCE ms;
-    context->Map(vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
-    memcpy(ms.pData, verts, sizeof(verts));
-    context->Unmap(vb, 0);
+    D3D11_MAPPED_SUBRESOURCE m;
+    ctx->Map(vb,0,D3D11_MAP_WRITE_DISCARD,0,&m);
+    memcpy(m.pData,vtx,sizeof(vtx));
+    ctx->Unmap(vb,0);
 
-    UINT stride = sizeof(VERTEX), offset = 0;
+    UINT s=sizeof(V),o=0;
+    ctx->IASetVertexBuffers(0,1,&vb,&s,&o);
+    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx->IASetInputLayout(layout);
 
-    context->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->IASetInputLayout(layout);
+    ctx->VSSetShader(vs,0,0);
+    ctx->PSSetShader(ps,0,0);
+    ctx->PSSetSamplers(0,1,&samp);
+    ctx->PSSetShaderResources(0,1,&srv);
 
-    context->VSSetShader(vs, 0, 0);
-    context->PSSetShader(ps, 0, 0);
-    context->PSSetSamplers(0, 1, &sampler);
-    context->PSSetShaderResources(0, 1, &srv);
+    ctx->OMSetRenderTargets(1,&rtv,0);
 
-    context->OMSetRenderTargets(1, &rtv, nullptr);
+    float c[4]={0,0,0,0};
+    ctx->ClearRenderTargetView(rtv,c);
 
-    float clear[4] = {0,0,0,0};
-    context->ClearRenderTargetView(rtv, clear);
-
-    context->Draw(6, 0);
-
-    swapChain->Present(1, 0); // frame pacing via vsync
+    ctx->Draw(6,0);
+    sc->Present(1,0);
 }
 
-void Cleanup() {
-    if (duplication) duplication->Release();
-    if (croppedTex) croppedTex->Release();
-    if (srv) srv->Release();
-    if (vb) vb->Release();
-    if (sampler) sampler->Release();
-    if (rtv) rtv->Release();
-    if (swapChain) swapChain->Release();
-    if (context) context->Release();
-    if (device) device->Release();
+void Clean(){
+    if(dup) dup->Release();
+    if(cropTex) cropTex->Release();
+    if(srv) srv->Release();
+    if(vb) vb->Release();
+    if(samp) samp->Release();
+    if(rtv) rtv->Release();
+    if(sc) sc->Release();
+    if(ctx) ctx->Release();
+    if(dev) dev->Release();
 }
 
-LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == WM_DESTROY) {
-        running = false;
-        PostQuitMessage(0);
-    }
-    return DefWindowProc(h, m, w, l);
+LRESULT CALLBACK WndProc(HWND h,UINT m,WPARAM w,LPARAM l){
+    if(m==WM_DESTROY){run=0;PostQuitMessage(0);}
+    return DefWindowProc(h,m,w,l);
 }
 
-int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
-    RECT r;
-    while (true) {
-        r = GetGameRect();
-        if (r.right != 0) break;
-        Sleep(500);
-    }
+int WINAPI WinMain(HINSTANCE h,HINSTANCE,LPSTR,int){
+    HWND tgt=0;
+    while(!(tgt=GetTarget())) Sleep(300);
 
-    int w = (int)((r.right - r.left) * 1.6f);
-    int h = (int)((r.bottom - r.top) * 1.6f);
+    RECT r=GetRect(tgt);
+    int w=(r.right-r.left)*1.6f;
+    int hgt=(r.bottom-r.top)*1.6f;
 
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    int sw=GetSystemMetrics(SM_CXSCREEN);
+    int sh=GetSystemMetrics(SM_CYSCREEN);
 
-    int x = (screenW - w) / 2;
-    int y = (screenH - h) / 2;
+    int x=(sw-w)/2;
+    int y=(sh-hgt)/2;
 
-    WNDCLASS wc = {};
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInst;
-    wc.lpszClassName = "overlay";
+    WNDCLASS wc={};
+    wc.lpfnWndProc=WndProc;
+    wc.hInstance=h;
+    wc.lpszClassName="ov";
     RegisterClass(&wc);
 
-    overlay = CreateWindowEx(
-        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT,
-        "overlay","",
-        WS_POPUP,
-        x,y,w,h,
-        0,0,hInst,0
-    );
+    wnd=CreateWindowEx(
+        WS_EX_TOPMOST|WS_EX_LAYERED|WS_EX_TRANSPARENT,
+        "ov","",WS_POPUP,x,y,w,hgt,0,0,h,0);
 
-    SetLayeredWindowAttributes(overlay, 0, 255, LWA_ALPHA);
-    ShowWindow(overlay, SW_SHOW);
+    SetLayeredWindowAttributes(wnd,0,255,LWA_ALPHA);
+    ShowWindow(wnd,1);
 
-    InitD3D(overlay, w, h);
-    CreateShaders();
+    InitD3D(wnd,w,hgt);
+    Shaders();
 
-    MSG msg = {};
+    MSG msg={};
 
-    while (running) {
-        while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) {
+    while(run){
+        while(PeekMessage(&msg,0,0,0,PM_REMOVE)){
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
 
-        ID3D11Texture2D* frame = Capture();
-        if (frame) {
-            Render(frame);
-            frame->Release();
+        ID3D11Texture2D* f=Capture();
+        if(f){
+            RECT rr=GetRect(tgt);
+            Crop(f,rr,tgt);
+
+            if(srv) srv->Release();
+            dev->CreateShaderResourceView(cropTex,0,&srv);
+
+            Draw();
+            f->Release();
         }
     }
 
-    Cleanup();
+    Clean();
     return 0;
 }
