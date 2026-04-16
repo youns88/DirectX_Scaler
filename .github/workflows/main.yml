@@ -6,17 +6,16 @@ jobs:
   build:
     runs-on: windows-latest
 
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
     - uses: actions/checkout@v4
 
     - uses: ilammy/msvc-dev-cmd@v1
 
-    - run: cl /O2 main.cpp d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /Fe:upscaler.exe
+    - name: Build
+      run: |
+        cl /O2 main.cpp d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /Fe:upscaler.exe
 
     - uses: actions/upload-artifact@v4
       with:
-        name: exe
+        name: upscaler
         path: upscaler.exe
