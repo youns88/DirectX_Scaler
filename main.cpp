@@ -11,7 +11,7 @@
 #define WS_EX_NOREDIRECTIONBITMAP 0x00200000L
 #endif
 
-const wchar_t* TARGET_TITLE = L"DOSBox-X 2025.12.01: DYNA - 3000 cycles/ms";
+const wchar_t* TARGET_TITLE = L"Peggle Deluxe 1.01";
 const float SCALE = 1.6f;
 
 // Shader with Bilinear Filtering + GPU Sharpening Pass
