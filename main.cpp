@@ -14,7 +14,6 @@
 const wchar_t* TARGET_TITLE = L"DOSBox-X 2025.12.01: DYNA - 3000 cycles/ms";
 const float SCALE = 1.6f;
 
-// Shader with Bilinear Filtering for smoothness
 const char* shaderSource = R"(
     struct VS_IN { float4 pos : POSITION; float2 uv : TEXCOORD; };
     struct PS_IN { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };
@@ -40,8 +39,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HWND gameHwnd = FindWindowW(NULL, TARGET_TITLE);
     if (!gameHwnd) return 0;
 
-    RECT gr; GetClientRect(gameHwnd, &gr);
-    int gameW = gr.right - gr.left, gameH = gr.bottom - gr.top;
+    // Get Client Area only (removes title bar/borders)
+    RECT cr; GetClientRect(gameHwnd, &cr);
+    int gameW = cr.right - cr.left, gameH = cr.bottom - cr.top;
     int upW = (int)(gameW * SCALE), upH = (int)(gameH * SCALE);
 
     WNDCLASSW wc = {0}; wc.lpfnWndProc = WndProc; wc.hInstance = hInstance; wc.lpszClassName = L"SharpScaler";
@@ -81,43 +81,49 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     ID3D11Buffer* vb; D3D11_BUFFER_DESC vbd = { sizeof(v), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER };
     D3D11_SUBRESOURCE_DATA vsrd = { v }; dev->CreateBuffer(&vbd, &vsrd, &vb);
 
-    // Dynamic texture for capture
     ID3D11Texture2D* capTex;
     D3D11_TEXTURE2D_DESC td = { (UINT)gameW, (UINT)gameH, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, {1,0}, D3D11_USAGE_DYNAMIC, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE };
     dev->CreateTexture2D(&td, NULL, &capTex);
     ID3D11ShaderResourceView* srv; dev->CreateShaderResourceView(capTex, NULL, &srv);
 
-    // Sampler for Bilinear Filtering
     ID3D11SamplerState* samp;
-    D3D11_SAMPLER_DESC smd = {};
-    smd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    D3D11_SAMPLER_DESC smd = {}; smd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     smd.AddressU = smd.AddressV = smd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     dev->CreateSamplerState(&smd, &samp);
 
-    HDC hdcMem = CreateCompatibleDC(NULL);
-    HBITMAP hbm = CreateCompatibleBitmap(GetDC(NULL), gameW, gameH);
+    HDC hdcGame = GetDC(gameHwnd);
+    HDC hdcMem = CreateCompatibleDC(hdcGame);
+    HBITMAP hbm = CreateCompatibleBitmap(hdcGame, gameW, gameH);
     SelectObject(hdcMem, hbm);
 
     MSG msg = {0};
     while (msg.message != WM_QUIT) {
         if (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
 
-        if (PrintWindow(gameHwnd, hdcMem, PW_RENDERFULLCONTENT)) {
-            D3D11_MAPPED_SUBRESOURCE mapped;
-            if (SUCCEEDED(ctx->Map(capTex, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-                BITMAPINFO bmi = {sizeof(BITMAPINFOHEADER), gameW, -gameH, 1, 32, BI_RGB};
-                // FIXED: Copy line-by-line to respect GPU RowPitch (prevents smeared/messed pixels)
-                BYTE* tempBuf = (BYTE*)malloc(gameW * 4 * gameH);
-                GetDIBits(hdcMem, hbm, 0, gameH, tempBuf, &bmi, DIB_RGB_COLORS);
-                for(int y=0; y<gameH; y++) {
-                    memcpy((BYTE*)mapped.pData + (y * mapped.RowPitch), tempBuf + (y * gameW * 4), gameW * 4);
-                }
-                free(tempBuf);
-                ctx->Unmap(capTex, 0);
-            }
+        // 1. Resource check: If minimized, hide and wait
+        if (IsIconic(gameHwnd)) {
+            ShowWindow(hwnd, SW_HIDE);
+            Sleep(100); 
+            continue;
+        } else if (!IsWindowVisible(hwnd)) {
+            ShowWindow(hwnd, SW_SHOW);
+        }
+
+        // 2. Capture client area only (no title bar)
+        BitBlt(hdcMem, 0, 0, gameW, gameH, hdcGame, 0, 0, SRCCOPY);
+        
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(ctx->Map(capTex, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            BITMAPINFO bmi = {sizeof(BITMAPINFOHEADER), gameW, -gameH, 1, 32, BI_RGB};
+            BYTE* temp = (BYTE*)malloc(gameW * 4 * gameH);
+            GetDIBits(hdcMem, hbm, 0, gameH, temp, &bmi, DIB_RGB_COLORS);
+            for(int y=0; y<gameH; y++) memcpy((BYTE*)mapped.pData + (y * mapped.RowPitch), temp + (y * gameW * 4), gameW * 4);
+            free(temp);
+            ctx->Unmap(capTex, 0);
         }
 
         ctx->OMSetRenderTargets(1, &rtv, NULL);
+        float clear[] = {0,0,0,1}; ctx->ClearRenderTargetView(rtv, clear);
         D3D11_VIEWPORT vp = {0, 0, (float)upW, (float)upH, 0, 1}; ctx->RSSetViewports(1, &vp);
         ctx->IASetInputLayout(lay);
         UINT str = sizeof(Vertex), off = 0; ctx->IASetVertexBuffers(0, 1, &vb, &str, &off);
@@ -128,9 +134,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         swap->Present(1, 0);
     }
 
-    // Cleanup everything
+    // Full Cleanup
+    DeleteObject(hbm); DeleteDC(hdcMem); ReleaseDC(gameHwnd, hdcGame);
     samp->Release(); capTex->Release(); srv->Release(); vb->Release(); lay->Release(); 
     vs->Release(); ps->Release(); rtv->Release(); swap->Release(); ctx->Release(); dev->Release();
-    DeleteObject(hbm); DeleteDC(hdcMem);
     return 0;
 }
