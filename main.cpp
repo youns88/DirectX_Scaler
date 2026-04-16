@@ -14,6 +14,7 @@
 const wchar_t* TARGET_TITLE = L"DOSBox-X 2025.12.01: DYNA - 3000 cycles/ms";
 const float SCALE = 1.6f;
 
+// Shader with Bilinear Filtering + GPU Sharpening Pass
 const char* shaderSource = R"(
     struct VS_IN { float4 pos : POSITION; float2 uv : TEXCOORD; };
     struct PS_IN { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };
@@ -24,7 +25,17 @@ const char* shaderSource = R"(
     Texture2D tex : register(t0);
     SamplerState samp : register(s0);
     float4 ps_main(PS_IN input) : SV_Target {
-        return tex.Sample(samp, input.uv);
+        float2 dims; tex.GetDimensions(dims.x, dims.y);
+        float2 pixel = 1.0 / dims;
+        
+        // Simple Sharpen Kernel
+        float4 center = tex.Sample(samp, input.uv);
+        float4 neighbor = tex.Sample(samp, input.uv + float2(pixel.x, 0)) +
+                         tex.Sample(samp, input.uv - float2(pixel.x, 0)) +
+                         tex.Sample(samp, input.uv + float2(0, pixel.y)) +
+                         tex.Sample(samp, input.uv - float2(0, pixel.y));
+        
+        return center + (center - (neighbor * 0.25)) * 0.4; // 0.4 is sharpen strength
     }
 )";
 
@@ -39,7 +50,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HWND gameHwnd = FindWindowW(NULL, TARGET_TITLE);
     if (!gameHwnd) return 0;
 
-    // Get Client Area only (removes title bar/borders)
     RECT cr; GetClientRect(gameHwnd, &cr);
     int gameW = cr.right - cr.left, gameH = cr.bottom - cr.top;
     int upW = (int)(gameW * SCALE), upH = (int)(gameH * SCALE);
@@ -100,16 +110,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     while (msg.message != WM_QUIT) {
         if (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
 
-        // 1. Resource check: If minimized, hide and wait
-        if (IsIconic(gameHwnd)) {
-            ShowWindow(hwnd, SW_HIDE);
-            Sleep(100); 
-            continue;
-        } else if (!IsWindowVisible(hwnd)) {
-            ShowWindow(hwnd, SW_SHOW);
-        }
+        if (IsIconic(gameHwnd)) { ShowWindow(hwnd, SW_HIDE); Sleep(100); continue; }
+        else if (!IsWindowVisible(hwnd)) { ShowWindow(hwnd, SW_SHOW); }
 
-        // 2. Capture client area only (no title bar)
         BitBlt(hdcMem, 0, 0, gameW, gameH, hdcGame, 0, 0, SRCCOPY);
         
         D3D11_MAPPED_SUBRESOURCE mapped;
@@ -134,7 +137,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         swap->Present(1, 0);
     }
 
-    // Full Cleanup
     DeleteObject(hbm); DeleteDC(hdcMem); ReleaseDC(gameHwnd, hdcGame);
     samp->Release(); capTex->Release(); srv->Release(); vb->Release(); lay->Release(); 
     vs->Release(); ps->Release(); rtv->Release(); swap->Release(); ctx->Release(); dev->Release();
