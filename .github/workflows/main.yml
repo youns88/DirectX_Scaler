@@ -1,8 +1,6 @@
-name: Build Upscaler
+name: build
 
-on:
-  push:
-  pull_request:
+on: [push]
 
 jobs:
   build:
@@ -14,15 +12,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup MSVC
-      uses: ilammy/msvc-dev-cmd@v1
+    - uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Build
-      run: |
-        cl /EHsc /O2 main.cpp d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /Fe:upscaler.exe
+    - run: cl /O2 main.cpp d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /Fe:upscaler.exe
 
-    - name: Upload EXE
-      uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v4
       with:
-        name: upscaler
+        name: exe
         path: upscaler.exe
