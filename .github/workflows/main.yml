@@ -1,21 +1,24 @@
-name: build
-
+name: Build Scaler
 on: [push]
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      
+      - name: Add MSVC to PATH
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
-    - uses: ilammy/msvc-dev-cmd@v1
+      - name: Compile
+        run: |
+          cl.exe /O2 /MT /EHsc main.cpp /link d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /OUT:SharpScaler.exe
+        shell: cmd
 
-    - name: Build
-      run: |
-        cl /O2 main.cpp d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /Fe:upscaler.exe
-
-    - uses: actions/upload-artifact@v4
-      with:
-        name: upscaler
-        path: upscaler.exe
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SharpScaler-Binary
+          path: SharpScaler.exe
